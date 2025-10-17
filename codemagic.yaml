@@ -8,11 +8,11 @@ workflows:
     environment:
       ios_signing:
         distribution_type: app_store
-        bundle_identifier: com.grouplld.EggCookProChickenRecipe
+        bundle_identifier: com.cookproeggapp.EggCookPro
       vars:
         APP_STORE_CONNECT_KEY: eggcookpro_key_manager
         APP_STORE_APPLE_ID: 6753989838
-        BUNDLE_ID: "com.grouplld.EggCookProChickenRecipe"
+        BUNDLE_ID: "com.cookproeggapp.EggCookPro"
         XCODE_PROJECT: "EggCookProChickenRecipe.xcodeproj"
         XCODE_SCHEME: "EggCookProChickenRecipe"
     scripts:
